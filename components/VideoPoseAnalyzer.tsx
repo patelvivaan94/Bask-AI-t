@@ -14,7 +14,7 @@ import {
   type Handedness,
   type PhaseMetrics,
   type PoseFrame
-} from "@/lib/poseMath";
+} from "../lib/poseMath";
 
 type CoachResponse = {
   shotFormSummary: string;
