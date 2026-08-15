@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
 import type { PhaseMetrics } from "@/lib/poseMath";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 type CoachRequestBody = {
   metrics: PhaseMetrics;
@@ -10,18 +14,6 @@ type CoachResponseBody = {
   shotFormSummary: string;
   primaryMechanicalError: string;
   correctiveDrillPlan: string[];
-};
-
-type GeminiCandidatePart = {
-  text?: string;
-};
-
-type GeminiResponse = {
-  candidates?: {
-    content?: {
-      parts?: GeminiCandidatePart[];
-    };
-  }[];
 };
 
 const SYSTEM_PROMPT = `
@@ -78,41 +70,29 @@ export async function POST(request: Request) {
 
   const prompt = `${SYSTEM_PROMPT}\n\nMetrics:\n${JSON.stringify(body.metrics, null, 2)}\n\nDeviations:\n${body.deviations.join("\n")}`;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }]
-          }
-        ]
-      })
-    }
-  );
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt
+    });
 
-  if (!response.ok) {
+    const rawText = response.text ?? "";
+    const parsedCoach = parseCoachJson(rawText);
+    if (parsedCoach) {
+      return NextResponse.json(parsedCoach);
+    }
+
+    return NextResponse.json({
+      shotFormSummary: rawText || "Shot analyzed with limited AI output.",
+      primaryMechanicalError: "Could not parse a single primary error from model output.",
+      correctiveDrillPlan: [
+        "Use one-hand form shots to reinforce vertical forearm alignment.",
+        "Practice dip-to-set rhythm with a 1-second pause at set point.",
+        "Finish each rep with full follow-through and high release above eye line."
+      ]
+    });
+  } catch {
     return NextResponse.json({ error: "Gemini request failed." }, { status: 502 });
   }
-
-  const geminiPayload = (await response.json()) as GeminiResponse;
-  const rawText = geminiPayload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("\n") ?? "";
-
-  const parsedCoach = parseCoachJson(rawText);
-  if (parsedCoach) {
-    return NextResponse.json(parsedCoach);
-  }
-
-  return NextResponse.json({
-    shotFormSummary: rawText || "Shot analyzed with limited AI output.",
-    primaryMechanicalError: "Could not parse a single primary error from model output.",
-    correctiveDrillPlan: [
-      "Use one-hand form shots to reinforce vertical forearm alignment.",
-      "Practice dip-to-set rhythm with a 1-second pause at set point.",
-      "Finish each rep with full follow-through and high release above eye line."
-    ]
-  });
 }
